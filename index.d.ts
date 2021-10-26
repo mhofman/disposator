@@ -9,7 +9,7 @@ export declare class Disposable {
    * @param disposables An iterable containing resources to be disposed of
    * when the returned object is itself disposed of
    */
-  static from(disposables: Iterable<Disposable.IterValue>): Disposable;
+  static from(disposables: Iterable<Disposable.UsingValue>): Disposable;
 
   /**
    * Creates a disposable object aggregating multiple disposable resources
@@ -21,7 +21,7 @@ export declare class Disposable {
    */
   static from<T>(
     values: Iterable<T>,
-    mapFn: (value: T) => Disposable.IterValue
+    mapFn: (value: T) => Disposable.UsingValue<T>
   ): Disposable;
 
   /**
@@ -30,7 +30,7 @@ export declare class Disposable {
    * @param disposables An iterable containing disposable resources over
    * which to iterate then dispose
    */
-  static usingFrom<T extends Disposable.IterValue>(
+  static usingFrom<T extends Disposable.UsingValue>(
     disposables: Iterable<T>
   ): Iterable<T>;
 
@@ -43,7 +43,7 @@ export declare class Disposable {
    */
   static usingFrom<T>(
     values: Iterable<T>,
-    mapFn: (value: T) => Disposable.IterValue
+    mapFn: (value: T) => Disposable.UsingValue<T>
   ): Iterable<T>;
 
   /**
@@ -59,7 +59,7 @@ export declare class Disposable {
    *
    * @param onDispose A callback to execute when this object is disposed of
    */
-  constructor(onDispose: () => void);
+  constructor(onDispose: Disposable.OnDispose<void>);
 
   /**
    * Disposes resources within this object
@@ -68,7 +68,9 @@ export declare class Disposable {
 }
 
 export declare namespace Disposable {
-  export type IterValue = Disposable;
+  export type OnDispose<T = void> = (this: T) => void;
+
+  export type UsingValue<T = void> = Disposable | OnDispose<T>;
 
   export interface Using {
     /**
@@ -77,16 +79,16 @@ export declare namespace Disposable {
      * @param disposable The disposable resource to track
      * @returns The disposable resource
      */
-    <T extends IterValue>(disposable: T): T;
+    <T extends UsingValue>(disposable: T): T;
 
     /**
      * Add a disposable resource for tracking in the current iterator
      *
      * @param value The value to map a disposable resource from
-     * @param mapFn A function returning a disposable resource from the value
+     * @param onDispose The dispose function called with the value as `this`
      * @returns The value
      */
-    <T>(value: T, mapFn: (value: T) => IterValue): T;
+    <T>(value: T, onDispose: OnDispose<T>): T;
   }
 
   export type UsingIterator = Iterator<Using, void, void>;
@@ -102,8 +104,8 @@ export declare class AsyncDisposable {
    */
   static from(
     disposables:
-      | Iterable<AsyncDisposable.IterValue>
-      | AsyncIterable<AsyncDisposable.IterValue>
+      | Iterable<AsyncDisposable.UsingValue>
+      | AsyncIterable<AsyncDisposable.UsingValue>
   ): Promise<AsyncDisposable>;
 
   /**
@@ -118,7 +120,7 @@ export declare class AsyncDisposable {
    */
   static from<T>(
     values: Iterable<T> | AsyncIterable<T>,
-    mapFn: (value: T) => AsyncDisposable.IterValue
+    mapFn: (value: T) => AsyncDisposable.UsingValue<T>
   ): Promise<AsyncDisposable>;
 
   /**
@@ -128,7 +130,7 @@ export declare class AsyncDisposable {
    * @param disposables An iterable or async iterable containing disposable
    * or async disposable resources over which to iterate then dispose
    */
-  static usingFrom<T extends AsyncDisposable.IterValue>(
+  static usingFrom<T extends AsyncDisposable.UsingValue>(
     disposables: Iterable<T> | AsyncIterable<T>
   ): AsyncIterable<T>;
 
@@ -143,7 +145,7 @@ export declare class AsyncDisposable {
    */
   static usingFrom<T>(
     values: Iterable<T> | AsyncIterable<T>,
-    mapFn: (value: T) => AsyncDisposable.IterValue
+    mapFn: (value: T) => AsyncDisposable.UsingValue<T>
   ): AsyncIterable<T>;
 
   /**
@@ -160,7 +162,7 @@ export declare class AsyncDisposable {
    * @param onDispose An async callback to execute when this object is
    * disposed of
    */
-  constructor(onDispose: () => void | PromiseLike<void>);
+  constructor(onDispose: AsyncDisposable.OnDispose<void>);
 
   /**
    * Disposes resources within this object
@@ -169,7 +171,12 @@ export declare class AsyncDisposable {
 }
 
 export declare namespace AsyncDisposable {
-  export type IterValue = Disposable | AsyncDisposable;
+  export type OnDispose<T = void> = (this: T) => void | PromiseLike<void>;
+
+  export type UsingValue<T = void> =
+    | Disposable
+    | AsyncDisposable
+    | OnDispose<T>;
 
   export interface Using {
     /**
@@ -179,18 +186,17 @@ export declare namespace AsyncDisposable {
      * @param disposable The disposable or async disposable resource to track
      * @returns The disposable or async disposable resource
      */
-    <T extends IterValue>(disposable: T): T;
+    <T extends UsingValue>(disposable: T): T;
 
     /**
      * Add a disposable or async disposable resource for tracking in the
      * current async iterator
      *
      * @param value The value to map a disposable or async disposable resource from
-     * @param mapFn A function returning a disposable or async disposable resource
-     * from the value
+     * @param onDispose The dispose function called with the value as `this`
      * @returns The value
      */
-    <T>(value: T, mapFn: (value: T) => IterValue): T;
+    <T>(value: T, onDispose: OnDispose<T>): T;
   }
 
   export type UsingAsyncIterator = AsyncIterator<Using, void, void>;

@@ -94,17 +94,20 @@ for (const using of Disposable) {
   console.log(`using ${res2.name}`);
   using(Disposable.from(getResources(testNames)));
   console.log("using aggregate");
-  using(new Disposable(() => console.log("done")));
+  using(() => console.log("done"));
+  using("foo", function () {
+    console.log("done with", this);
+  });
 }
 
 for (const using of Disposable) {
-  using(new Disposable(() => console.log("cleaning after break")));
+  using(() => console.log("cleaning after break"));
   break;
 }
 
 try {
   for (const using of Disposable) {
-    using(new Disposable(() => console.log("cleaning after throw")));
+    using(() => console.log("cleaning after throw"));
     throw new Error();
   }
 } catch (err) {}
@@ -127,7 +130,7 @@ try {
 
 for (const obj of Disposable.usingFrom(
   testNames.map((name) => ({ name })),
-  (obj) => new Disposable(() => cleanup(obj))
+  (obj) => () => cleanup(obj)
 )) {
   console.log(`using ${obj.name}`);
 }
@@ -141,17 +144,21 @@ for await (const using of AsyncDisposable) {
   console.log("using async aggregate");
   using(await AsyncDisposable.from(getResourcesAsync(testNames)));
   console.log("using aggregate async");
-  using(new AsyncDisposable(() => console.log("done")));
+  using(() => console.log("done"));
+  using("foo", async function () {
+    await Promise.resolve();
+    console.log("done with", this);
+  });
 }
 
 for await (const using of AsyncDisposable) {
-  using(new AsyncDisposable(() => console.log("cleaning after break async")));
+  using(() => console.log("cleaning after break async"));
   break;
 }
 
 try {
   for await (const using of AsyncDisposable) {
-    using(new AsyncDisposable(() => console.log("cleaning after throw async")));
+    using(() => console.log("cleaning after throw async"));
     throw new Error();
   }
 } catch (err) {}
