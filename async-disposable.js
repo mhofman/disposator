@@ -265,14 +265,21 @@ const AsyncDisposable = /** @type {AsyncDisposableConstructor} */ (
       const errors = [];
       let iterationError;
       try {
+        const asyncIterable = /** @type {AsyncIterable<unknown>} */ (
+          disposables
+        );
         const syncIterable = /** @type {Iterable<unknown>} */ (disposables);
-        if (Symbol.iterator in syncIterable) {
-          for (const disposable of syncIterable) {
-            addDisposable(mapFn(disposable), stack, (err) => errors.push(err));
+        if (Symbol.asyncIterator in asyncIterable) {
+          for await (const disposable of asyncIterable) {
+            addDisposable(mapFn(disposable), disposable, stack, (err) =>
+              errors.push(err)
+            );
           }
         } else {
-          for await (const disposable of disposables) {
-            addDisposable(mapFn(disposable), stack, (err) => errors.push(err));
+          for (const disposable of syncIterable) {
+            addDisposable(mapFn(disposable), disposable, stack, (err) =>
+              errors.push(err)
+            );
           }
         }
       } catch (err) {
