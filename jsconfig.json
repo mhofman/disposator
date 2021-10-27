@@ -1,0 +1,23 @@
+// This file can contain .js-specific Typescript compiler config.
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "ESNext",
+    "noEmit": true,
+    "checkJs": true,
+    "useDefineForClassFields": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "noImplicitAny": true,
+    "exactOptionalPropertyTypes": true,
+    "allowUnreachableCode": false,
+    "isolatedModules": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": ["*.js", "*.d.ts"]
+}
