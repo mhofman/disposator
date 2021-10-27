@@ -1,5 +1,3 @@
-// export declare const symbolDispose: typeof import("./index.js").symbolDispose;
+export declare const symbolDispose: unique symbol;
 
-import { symbolDispose, symbolAsyncDispose } from "./index.js";
-
-export { symbolDispose, symbolAsyncDispose };
+export declare const symbolAsyncDispose: unique symbol;

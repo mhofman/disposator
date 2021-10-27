@@ -87,7 +87,7 @@ const getResourcesAsync = async function* (names) {
 
 const testNames = ["hello", "bonjour"];
 
-for (const using of Disposable) {
+for (const { using } of Disposable) {
   const res1 = using(getResource("ola"));
   console.log(`using ${res1.name}`);
   const res2 = using(getResource("gracias"));
@@ -100,13 +100,13 @@ for (const using of Disposable) {
   });
 }
 
-for (const using of Disposable) {
+for (const { using } of Disposable) {
   using(() => console.log("cleaning after break"));
   break;
 }
 
 try {
-  for (const using of Disposable) {
+  for (const { using } of Disposable) {
     using(() => console.log("cleaning after throw"));
     throw new Error();
   }
@@ -135,7 +135,7 @@ for (const obj of Disposable.usingFrom(
   console.log(`using ${obj.name}`);
 }
 
-for await (const using of AsyncDisposable) {
+for await (const { using } of AsyncDisposable) {
   const res1 = using(getResource("ola"));
   console.log(`async using ${res1.name}`);
   const res2 = using(getAsyncResource("gracias"));
@@ -151,13 +151,13 @@ for await (const using of AsyncDisposable) {
   });
 }
 
-for await (const using of AsyncDisposable) {
+for await (const { using } of AsyncDisposable) {
   using(() => console.log("cleaning after break async"));
   break;
 }
 
 try {
-  for await (const using of AsyncDisposable) {
+  for await (const { using } of AsyncDisposable) {
     using(() => console.log("cleaning after throw async"));
     throw new Error();
   }

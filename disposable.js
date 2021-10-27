@@ -1,18 +1,13 @@
 import { createIterator } from "./iterator-prototypes.js";
 import { symbolDispose } from "./symbols.js";
 
-/** @typedef {typeof import("./index.js").Disposable} DisposableConstructor */
-/** @typedef {import("./index.js").Disposable} IDisposable */
-/** @typedef {import("./index.js").Disposable.UsingValue} DisposableValue */
+/** @typedef {import("./disposable.js").Disposable.Constructor} DisposableConstructor */
+/** @typedef {import("./disposable.js").Disposable} IDisposable */
+/** @typedef {import("./disposable.js").Disposable.Resource} DisposableResource */
 
-/** @typedef {import("./index.js").Disposable.OnDispose<any>} DisposeMethod */
-/** @typedef {(value: any) => DisposableValue} MapFn */
-/**
- * @callback DisposableUsing
- * @param {any} value
- * @param {DisposeMethod} [onDispose]
- * @returns {unknown}
- */
+/** @typedef {import("./disposable.js").Disposable.OnDispose<any>} DisposeMethod */
+/** @typedef {(value: any) => DisposableResource} MapFn */
+/** @typedef {import("./disposable.js").Disposable.Aggregate} DisposableAggregate */
 
 /**
  * @typedef {Object} DisposableResourceRecord
@@ -44,7 +39,7 @@ const getRecordFromValue = (value, resource) => {
 };
 
 /**
- * @template {DisposableValue} T
+ * @template {DisposableResource} T
  * @param {T} disposable
  * @param {unknown} resource
  * @param {Array<DisposableResourceRecord>} stack
@@ -168,7 +163,7 @@ const wrapIterator = (iter, getDisposable) => {
   return wrapped;
 };
 
-const Disposable = /** @type {DisposableConstructor} */ (
+export const Disposable = /** @type {DisposableConstructor} */ (
   class Disposable {
     /** @type {Array<DisposableResourceRecord>} */
     #resourceStack = [];
@@ -177,17 +172,17 @@ const Disposable = /** @type {DisposableConstructor} */ (
     #state = "pending";
 
     /**
-     * @param {DisposeMethod} onDispose
+     * @param {DisposableResource[]} args
      */
-    constructor(onDispose) {
-      if (typeof onDispose !== "function") {
-        throw new TypeError("Invalid onDispose argument");
-      }
-      this.#resourceStack.push({
-        resourceValue: null,
-        hint: "sync",
-        disposeMethod: onDispose,
+    constructor(...args) {
+      Object.defineProperty(this, "using", {
+        value: this.using.bind(this),
+        configurable: true,
+        writable: true,
+        enumerable: true,
       });
+
+      if (args.length) this.#from(args);
     }
 
     [symbolDispose]() {
@@ -225,33 +220,27 @@ const Disposable = /** @type {DisposableConstructor} */ (
       }
     }
 
-    static #makeEmpty() {
-      const dummyDispose = () => {};
-      /** @type {Disposable} */
-      const res = Reflect.construct(this, [dummyDispose]);
+    /**
+     * @param {any} value
+     * @param {DisposeMethod} [onDispose]
+     */
+    using(value, onDispose) {
+      const stack = this.#resourceStack;
 
-      const stack = res.#resourceStack;
+      typeof onDispose === "function"
+        ? addDisposable(onDispose, value, stack)
+        : addDisposable(value, value, stack);
 
-      if (
-        stack.length !== 1 ||
-        /** @type {DisposableResourceRecord} */ (stack.pop()).disposeMethod !==
-          dummyDispose
-      ) {
-        throw new TypeError("Created invalid disposable");
-      }
-
-      return {
-        res: /** @type {IDisposable} */ (res),
-        stack,
-      };
+      return value;
     }
 
     /**
      * @param {Iterable<unknown>} disposables
      * @param {MapFn} [mapFn]
      */
-    static from(disposables, mapFn = defaultMapFn) {
-      const { res, stack } = (this || Disposable).#makeEmpty();
+    #from(disposables, mapFn = defaultMapFn) {
+      const res = this;
+      const stack = res.#resourceStack;
 
       const errors = [];
       let iterationError;
@@ -294,6 +283,15 @@ const Disposable = /** @type {DisposableConstructor} */ (
         }
         throw error;
       }
+    }
+
+    /**
+     * @param {Iterable<unknown>} disposables
+     * @param {MapFn} [mapFn]
+     */
+    static from(disposables, mapFn = undefined) {
+      const res = new (this || Disposable)();
+      res.#from(disposables, mapFn);
 
       return res;
     }
@@ -323,49 +321,54 @@ const Disposable = /** @type {DisposableConstructor} */ (
     }
 
     static [Symbol.iterator]() {
-      const { res, stack } = this.#makeEmpty();
+      /** @type {DisposableAggregate | undefined} */
+      let res = new (this || Disposable)();
 
-      /** @type {DisposableUsing | undefined} */
-      let using = (value, onDispose) =>
-        typeof onDispose === "function"
-          ? addDisposable(onDispose, value, stack)
-          : addDisposable(value, value, stack);
+      let used = false;
 
-      /** @type {import("./index.js").Disposable.UsingIterator} */
+      /** @type {import("./disposable.js").Disposable.UsingIterator} */
       const iterator = createIterator({
         next() {
-          if (using) {
-            const value = using;
-            using = undefined;
+          if (!used && res) {
+            used = true;
             return {
-              value,
+              value: res,
               done: false,
             };
           } else {
-            res[symbolDispose]();
+            if (res) {
+              res[symbolDispose]();
+              res = undefined;
+            }
             return {
-              value: undefined,
+              value: res,
               done: true,
             };
           }
         },
         return() {
-          using = undefined;
+          used = true;
           try {
-            res[symbolDispose]();
+            if (res) {
+              res[symbolDispose]();
+              res = undefined;
+            }
           } catch (disposeError) {
             // TODO: find a way to report when `return` triggered by a throw
             throw disposeError;
           }
           return {
-            value: undefined,
+            value: res,
             done: true,
           };
         },
         throw(err) {
-          using = undefined;
+          used = true;
           try {
-            res[symbolDispose]();
+            if (res) {
+              res[symbolDispose]();
+              res = undefined;
+            }
           } catch (disposeError) {
             if (!("cause" in /** @type {Object}*/ (disposeError))) {
               Object.defineProperty(disposeError, "cause", {
@@ -387,5 +390,3 @@ const Disposable = /** @type {DisposableConstructor} */ (
     }
   }
 );
-
-export { Disposable as default };

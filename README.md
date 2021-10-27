@@ -5,11 +5,12 @@ This package provides an API inspired from the [Explicit Resource Management TC3
 ```js
 import { Disposable } from "disposator";
 
-for (const using of Disposable) {
+for (const { using } of Disposable) {
   const resource = using(getResource());
   resource.doSomething();
   const other = using(resource.getOther());
-  other.doStuff();
+  const stuff = other.doStuff();
+  using(() => cleanUpStuff(stuff));
 } // automatically cleanup, even when something throws
 ```
 
@@ -49,74 +50,249 @@ interface AsyncDisposable {
 }
 ```
 
-## `using` iterator helpers
+### functions as _disposable_
 
-The `Disposable` and `AsyncDisposable` exports both implement a special iterator helper which disposes of tracked resources when the iterator is closed. While these iterators only ever yield a single value (the helper function to add tracked resources), they are meant to be used with respectively the `for-of` and `for-await-of` statements which automatically closes their iterator in case of an early return or thrown error.
+#### _disposable like_
 
-Errors thrown while disposing of tracked resources will be aggregated if multiple resources are tracked, and re-thrown once all tracked resources have been disposed of. If the disposal was triggered by an error thrown during the evaluation of the `for-of` or `for-await-of` block, that error takes precedence and errors occurring during the disposal are ignored. This is unlike `try-finally` statements where an error during the `finally` block takes precedence over the `try` block.
-
-Tracking any value that doesn't implement the `Disposable` or `AsyncDisposable` interfaces throws an immediate `TypeError`.
-
-### `for (const using of Disposable)`
+A function can be used in places where a _disposable_ is expected. In that case the provided dispose function will simply be called, with no `this` context.
 
 ```ts
-/**
- * Add a disposable resource for tracking in the current iterator
- */
-interface DisposableUsing {
+type OnDispose = () => void;
+```
+
+#### _async disposable like_
+
+An async function can be used in places where an _async disposable_ is expected. In that case the provided dispose function will simply be called, with no `this` context, and the result will be awaited.
+
+```ts
+type OnAsyncDispose = () => void | PromiseLike<void>;
+```
+
+## Aggregate `Disposable` and `AsyncDisposable` objects
+
+The package provides classes implementing the `Disposable` and `AsyncDisposable` interfaces allowing to wrap one or aggregate multiple _disposable like_ or _async disposable like_ resources. The resources can be added at construction and/or later using the aggregate object's `using` helper. The aggregated resources are disposed of in reverse order. If multiple resources are aggregated, any error thrown during their disposal are aggregated, and an `AggregateError` is thrown once all tracked resources have been disposed of. If any error occurs during construction (such as adding an invalid resource), all resources added are automatically disposed of.
+
+Initial aggregated resources are added eagerly, either as multiple values passed to the constructor, or through an iterable provided to the static `from` method. The latter is preferred to create an aggregated object from initial resources, especially in the case of `AsyncDisposable`. With static `from`, resources are added for tracking as soon as they are iterated over, and any disposal error is merged with errors that triggered the construction-time disposal. Additionally the `from` helper optionally takes a mapping function similar to `Array.from()` allowing to reactively create during iteration a _disposable like_ or _async disposable like_ resource from any iterated value.
+
+If the resources to aggregate are not all available at the same time, they can be added later with the `using` helper. If only a single resource needs to be in use while iterating over a collection, the `usingFrom` helper streamlines an acquire-use-dispose iteration.
+
+### `Disposable` aggregate constructor
+
+```ts
+type DisposableResource = Disposable | OnAsyncDispose;
+
+interface AggregateDisposableConstructor {
   /**
-   * @param disposable - The disposable resource to track
+   * Creates a disposable object aggregating the given disposable resources
+   *
+   * @param disposables An iterable containing resources to be disposed of
+   * when the returned object is itself disposed of
+   */
+  from(disposables: Iterable<DisposableResource>): AggregateDisposable;
+
+  /**
+   * Creates a disposable object aggregating the given disposable resources
+   *
+   * @param values An iterable containing values for which the mapped
+   * resource will be disposed of when the returned object is itself disposed of
+   * @param mapFn A function returning a disposable resource from the
+   * iterated value
+   */
+  from<T>(
+    values: Iterable<T>,
+    mapFn: (value: T) => DisposableResource
+  ): AggregateDisposable;
+
+  /**
+   * Creates an aggregate disposable object
+   *
+   * @param args Initial resources to add for tracking
+   */
+  new (...args: DisposableResource[]): AggregateDisposable;
+}
+
+export const Disposable: AggregateDisposableConstructor;
+```
+
+`Disposable.from()` consumes any `Iterable`. The optional `mapFn` will be called for each iterated value and must return a _disposable like_ resource.
+
+`new Disposable()` accepts zero or any number of _disposable like_ resources.
+
+### `AsyncDisposable` aggregate constructor
+
+```ts
+type AsyncDisposableResource = AsyncDisposable | Disposable | OnDispose;
+
+interface AggregateAsyncDisposableConstructor {
+  /**
+   * Creates an async disposable object aggregating the given disposable or
+   * async disposable resources
+   *
+   * @param disposables An iterable or async iterable containing resources to
+   * be disposed of when the returned object is itself disposed of
+   */
+  from(
+    disposables:
+      | Iterable<AsyncDisposableResource>
+      | AsyncIterable<AsyncDisposableResource>
+  ): Promise<AggregateAsyncDisposable>;
+
+  /**
+   * Creates an async disposable object aggregating the given disposable or
+   * async disposable resources
+   *
+   * @param values An iterable or async iterable containing values for which
+   * the mapped resource will be disposed of when the returned object is itself
+   * disposed of
+   * @param mapFn A function returning a disposable or async disposable
+   * resource from the iterated value
+   */
+  from<T>(
+    values: Iterable<T> | AsyncIterable<T>,
+    mapFn: (value: T) => AsyncDisposableResource
+  ): Promise<AggregateAsyncDisposable>;
+
+  /**
+   * Creates an aggregate async disposable object
+   *
+   * Note: Prefer AsyncDisposable.from()
+   * Any error adding the initial tracked resources may result in an unhandled
+   * rejection resulting from the automatic disposal of the added resources
+   *
+   * @param args Initial resources to add for tracking
+   */
+  new (...args: AsyncDisposableResource[]): AggregateAsyncDisposable;
+}
+
+export const AsyncDisposable: AggregateAsyncDisposableConstructor;
+```
+
+`AsyncDisposable.from()` consumes any `Iterable` or `AsyncIterable`. The optional `mapFn` will be called for each iterated value and must return a _disposable like_ or _async iterable like_ resource.
+
+`new AsyncDisposable()` accepts zero or any number of _disposable like_ or _async disposable like_ resources. If an error occurs while adding a resource for tracking, the resources added will be disposed and construction will throw. However any error occurring during this disposal will result in an unhandled rejection. To handle this case, prefer `AsyncDisposable.from()`.
+
+### `using` helper: add resources for tracking
+
+The `AggregateDisposable` and `AggregateAsyncDisposable` objects expose a `using` helper on their instance which can be used to add resources for tracking after construction of the aggregate object. The `using` helper can be detached from the aggregate object (it's bound at construction). It passes through its value for chaining, or assignment at acquisition time. `using` accepts a dispose callback function as an optional argument. This can be used to implement disposal for values which do not implement the disposables interfaces. In that case the value is passed as `this` context to the dispose callback
+
+#### Aggregate `Disposable`
+
+```ts
+interface AggregateDisposable extends Disposable {
+  /**
+   * Helper adding new resources to track in the aggregated disposable.
+   * The helper can be detached
+   */
+  readonly using: AggregateDisposableUsing;
+}
+
+/**
+ * Add a disposable resource for tracking
+ */
+interface AggregateDisposableUsing {
+  /**
+   * @param disposable The disposable resource to track
    * @returns The disposable resource
    */
-  <T extends Disposable>(disposable: T): T;
+  <T extends DisposableResource>(disposable: T): T;
 
   /**
-   * @param value - The value to map a disposable resource from
-   * @param mapFn - A function returning a disposable resource from the value
+   * @param value A value to consider as a resource to dispose
+   * @param onDispose The dispose callback invoked with the value
+   * as `this` context
    * @returns The value
    */
-  <T>(value: T, mapFn: (value: T) => Disposable): T;
+  <T>(value: T, onDispose: OnDispose): T;
 }
 ```
 
-The `using` helper function yielded by `Disposable`'s iterator can be used to track any _disposable_ resource. It captures the _disposable_ and its dispose method, then passes through the value. An optional `mapFn` second argument can generate from the value a _disposable_ resource to track. When the iterator closes, either from an early return, thrown error, or once the block completes, the tracked resources are disposed of in reverse order to which they were added.
+The `Disposable`'s `using` helper function can be used to track any _disposable like_ resource. It captures the _disposable_ and its dispose method, or the dispose callback, then passes through the value. Additionally `using` can be called with an `onDispose` callback as second argument, which will be called with the value as `this` context. When the aggregate object is disposed of, the tracked resources are disposed of in reverse order to which they were added.
 
-### `for await (const using of AsyncDisposable)`
+#### Aggregate `AsyncDisposable`
 
 ```ts
-/**
- * Add a disposable or async disposable resource for tracking in the
- * current async iterator
- */
-interface AsyncDisposableUsing {
+interface AggregateAsyncDisposable extends AsyncDisposable {
   /**
-   * @param disposable - The disposable or async disposable resource to track
+   * Helper adding new resources to track in the aggregated async disposable.
+   * The helper can be detached
+   */
+  readonly using: AggregateAsyncDisposableUsing;
+}
+
+/**
+ * Add a disposable or async disposable resource for tracking
+ */
+interface AggregateAsyncDisposableUsing {
+  /**
+   * @param disposable The disposable or async disposable resource to track
    * @returns The disposable or async disposable resource
    */
-  <T extends Disposable | AsyncDisposable>(disposable: T): T;
+  <T extends AsyncDisposableResource>(disposable: T): T;
 
   /**
-   * @param value - The value to map a disposable or async disposable resource from
-   * @param mapFn - A function returning a disposable or async disposable resource
-   * from the value
+   * @param value A value to consider as a resource to dispose
+   * @param onDispose The async dispose callback invoked with the value
+   *  as `this` context
    * @returns The value
    */
-  <T>(value: T, mapFn: (value: T) => Disposable | AsyncDisposable): T;
+  <T>(value: T, onDispose: OnAsyncDispose): T;
 }
 ```
 
-The `using` helper function yielded by `AsyncDisposable`'s iterator can be used to track any _disposable_ or _async disposable_ resource. It captures the _disposable_ and its dispose method, or the _async disposable_ and its async dispose method, then passes through the value. An optional `mapFn` second argument can generate from the value a _disposable_ or _async disposable_ resource to track. When the iterator closes, either from an early return, thrown error, or once the block completes, the tracked resources are disposed of in reverse order to which they were added.
+The `Disposable`'s `using` helper function can be used to track any _disposable like_ resource. It captures the _disposable_ and its dispose method, or the dispose callback, then passes through the value. Additionally `using` can be called with an `onDispose` callback as second argument, which will be called with the value as `this` context. When the aggregate object is disposed of, the tracked resources are disposed of in reverse order to which they were added.
 
-The disposal of an _async disposable_ resource is awaited before moving to the next resource. The disposal of a _disposable_ resource is not awaited. The aggregate disposal step is always awaited even if all tracked resources are _disposable_ which are disposed of synchronously.
+The `AsyncDisposable`'s `using` helper function can be used to track any _disposable_ or _async disposable like_ resource. It captures the _disposable_ and its dispose method, the _async disposable_ and its async dispose method, or the async dispose callback, then passes through the value. Additionally `using` can be called with an `onDispose` async callback as second argument, which will be called with the value as `this` context. When the aggregate async object is disposed of, the tracked resources are disposed of in reverse order to which they were added.
+
+The disposal of an _async disposable like_ resource is awaited before moving to the next resource. The disposal of a _disposable_ resource is not awaited. The aggregate disposal step is always awaited even if all tracked resources are _disposable_ which are disposed of synchronously.
+
+## Aggregate disposable iterator helper
+
+The `Disposable` and `AsyncDisposable` exports both implement a special iterator helper which streamlines creating an aggregated resource object and disposing of resources added for tracking. While these iterators only ever yield a single value (the aggregate object), they are meant to be used with respectively the `for-of` and `for-await-of` statements which automatically closes their iterator in case of an early return or thrown error. The iterator closure triggers the disposal of the aggregate object and the resources it tracks.
+
+Combined with the detachable `using` helper of the aggregate object, it allows seamlessly tracking multiple _disposable like_ or _async disposable like_ resources and ensuring that they are properly disposed of when exiting a scope block, without dealing directly with the aggregate object itself.
+
+If the disposal of the aggregate resource was triggered by an error thrown during the evaluation of the `for-of` or `for-await-of` block, that error takes precedence and errors occurring during the disposal are ignored. This is unlike `try-finally` statements where an error during the `finally` block takes precedence over the `try` block.
+
+### `for (const { using } of Disposable)`
+
+```ts
+interface AggregateDisposableConstructor {
+  /**
+   * Returns an iterator which yields a new aggregate instance. Its `using`
+   * helper can be used to track disposable resources which will be disposed
+   * of when the iterator is closed. Use with a `for-of` statement to perform
+   * RAII style explicit resource management
+   */
+  [Symbol.iterator](): Iterator<AggregateDisposable, void, void>;
+}
+```
+
+When the iterator closes, either from an early return, thrown error, or once the block completes, the aggregate object disposes of its tracked resources in reverse order to which they were added.
+
+### `for await (const { using } of AsyncDisposable)`
+
+```ts
+interface AggregateAsyncDisposableConstructor {
+  /**
+   * Returns an iterator which yields a new async aggregate instance. Its `using`
+   * helper can be used to track disposable or async disposable resources
+   * which will be disposed of when the iterator is closed. Use with a
+   * `for-await-of` statement to perform RAII style explicit resource management
+   */
+  [Symbol.asyncIterator](): AsyncIterator<AggregateAsyncDisposable, void, void>;
+}
+```
+
+When the iterator closes, either from an early return, thrown error, or once the block completes, the async aggregate object disposes of its tracked resources in reverse order to which they were added.
 
 ### Examples
 
-The following show examples of using this package with various APIs, assuming those APIs implement the _disposable_ or _async disposable_ interfaces.
+The following show examples of using the iterator helper with various APIs, assuming those APIs implement the _disposable_ or _async disposable_ interfaces.
 
 **WHATWG Streams Reader API**
 
 ```js
-for await (const using of AsyncDisposable) {
+for await (const { using } of AsyncDisposable) {
   const reader = using(stream.getReader());
   const { value, done } = await reader.read();
 }
@@ -125,7 +301,7 @@ for await (const using of AsyncDisposable) {
 **NodeJS FileHandle**
 
 ```js
-for await (const using of AsyncDisposable) {
+for await (const { using } of AsyncDisposable) {
   const f1 = using(await fs.promises.open(s1, constants.O_RDONLY)),
   const f2 = using(await fs.promises.open(s2, constants.O_WRONLY));
   const buffer = Buffer.alloc(4092);
@@ -138,7 +314,7 @@ for await (const using of AsyncDisposable) {
 
 ```js
 // roll back transaction if either action fails
-for await (const using of AsyncDisposable) {
+for await (const { using } of AsyncDisposable) {
   const tx = using(transactionManager.startTransaction(account1, account2));
   await account1.debit(amount);
   await account2.credit(amount);
@@ -153,7 +329,7 @@ for await (const using of AsyncDisposable) {
 ```js
 // audit privileged function call entry and exit
 function privilegedActivity() {
-  for (const using of Disposable) {
+  for (const { using } of Disposable) {
     using(auditLog.startActivity("privilegedActivity")); // log activity start
     ...
   } // log activity end
@@ -167,16 +343,38 @@ import { Semaphore } from "...";
 const sem = new Semaphore(1); // allow one participant at a time
 
 export async function tryUpdate(record) {
-  for (const using of Disposable) {
+  for (const { using } of Disposable) {
     using(await sem.wait()); // asynchronously block until we are the sole participant
     ...
   } // synchronously release semaphore and notify the next participant
 }
 ```
 
+The following show examples of integrating with API which do not implement the `Disposable` or `AsyncDisposable` interface\*\*
+
+**Working with existing resources**
+
+```js
+for await (const { using } of AsyncDisposable) {
+  const reader = ...;
+  using(() => reader.releaseLock());
+  ...
+}
+```
+
+**Schedule other cleanup work to evaluate at the end of the block similar to Go's `defer` statement**
+
+```js
+for (const { using } of Disposable) {
+  console.log("enter");
+  using(() => console.log("exit"));
+  ...
+}
+```
+
 ## `usingFrom`: iterable of _disposable_
 
-The `Disposable.usingFrom()` and `AsyncDisposable.usingFrom()` helpers streamline iterating over resources, ensuring that each iterated resource is disposed of. They do not dispose of resources that are not iterated over, e.g. if the iteration is terminated early.
+The `Disposable.usingFrom()` and `AsyncDisposable.usingFrom()` helpers streamline iterating over resources, ensuring that each iterated resource is disposed of before acquiring the next resource. They do not dispose of resources that are not iterated over, e.g. if the iteration is terminated early.
 
 The helpers works by generating a new iterable which captures a provided iterable, and an optional `mapFn` function. When an iterator is subsequently requested, the captured iterable's iterator is requested and wrapped. For each iteration, the iterator requests the next value from the wrapped iterator, tracks the resource, then yields the value. The optional `mapFn` function can be used to generate a _disposable_ or _async disposable_ resource from the iterated value.
 
@@ -185,57 +383,65 @@ After each iteration step, the resource is disposed of, regardless of how the st
 ### `Disposable.usingFrom()`
 
 ```ts
-/**
- * Wraps an iterable to ensure that iterated resources are disposed of
- */
-interface DisposableUsingFrom {
+interface AggregateDisposableConstructor {
   /**
+   * Wraps an iterable to ensure that iterated resources are disposed of
+   *
    * @param disposables An iterable containing disposable resources over
    * which to iterate then dispose
    */
-  <T extends Disposable>(disposables: Iterable<T>): Iterable<T>;
+  usingFrom<T extends DisposableResource>(
+    disposables: Iterable<T>
+  ): Iterable<T>;
 
   /**
-   * @param values - An iterable containing values over which to iterate
-   * @param mapFn - A function returning a disposable resource from the
+   * Wraps an iterable to ensure that iterated resources are disposed of
+   *
+   * @param values An iterable containing values over which to iterate
+   * @param mapFn A function returning a disposable resource from the
    * iterated value
    */
-  <T>(values: Iterable<T>, mapFn: (value: T) => Disposable): Iterable<T>;
+  usingFrom<T>(
+    values: Iterable<T>,
+    mapFn: (value: T) => DisposableResource
+  ): Iterable<T>;
 }
 ```
 
-`Disposable.usingFrom()` can wrap any `Iterable`. The optional `mapFn` will be called for each iterated value and must return a _disposable_ resource.
+`Disposable.usingFrom()` can wrap any `Iterable`. The optional `mapFn` will be called for each iterated value and must return a _disposable like_ resource.
 
 ### `AsyncDisposable.usingFrom()`
 
 ```ts
-/**
- * Wraps an iterable or async iterable to ensure that iterated resources are
- * disposed of
- */
-interface AsyncDisposableUsingFrom {
+interface AggregateAsyncDisposableConstructor {
   /**
-   * @param disposables - An iterable or async iterable containing disposable
+   * Wraps an iterable or async iterable to ensure that iterated resources are
+   * disposed of
+   *
+   * @param disposables An iterable or async iterable containing disposable
    * or async disposable resources over which to iterate then dispose
    */
-  <T extends Disposable | AsyncDisposable>(
+  usingFrom<T extends AsyncDisposableResource>(
     disposables: Iterable<T> | AsyncIterable<T>
   ): AsyncIterable<T>;
 
   /**
-   * @param values - An iterable or async iterable containing values over which
+   * Wraps an iterable or async iterable to ensure that iterated resources are
+   * disposed of
+   *
+   * @param values An iterable or async iterable containing values over which
    * to iterate
-   * @param mapFn - A function returning a disposable or async disposable from
-   * the iterated value
+   * @param mapFn A function returning a disposable or async disposable
+   * resource from the iterated value
    */
-  <T>(
-    values: Iterable<T>,
-    mapFn: (value: T) => Disposable | AsyncDisposable
+  usingFrom<T>(
+    values: Iterable<T> | AsyncIterable<T>,
+    mapFn: (value: T) => AsyncDisposableResource
   ): AsyncIterable<T>;
 }
 ```
 
-`AsyncDisposable.usingFrom()` can wrap any `Iterable` or `AsyncIterable`. The optional `mapFn` will be called for each iterated value and must return a _disposable_ or _async disposable_ resource.
+`AsyncDisposable.usingFrom()` can wrap any `Iterable` or `AsyncIterable`. The optional `mapFn` will be called for each iterated value and must return a _disposable_ or _async disposable like_ resource.
 
 ### Examples
 
@@ -248,7 +454,7 @@ for (const res of Disposable.usingFrom(iterateResources())) {
 ```js
 for (const value of Disposable.usingFrom(
   values,
-  (value) => new Disposable(() => cleanup(value))
+  (value) => () => cleanup(value)
 )) {
   // use value
 }
@@ -263,116 +469,5 @@ for await (const res of AsyncDisposable.usingFrom(iterateAsyncResources())) {
 ```js
 for await (const res of AsyncDisposable.usingFrom(asyncIterateResources())) {
   // use res
-}
-```
-
-## `Disposable` and `AsyncDisposable` container objects
-
-The package provides base classes implementing the `Disposable` and `AsyncDisposable` interfaces.
-
-Their constructor creates a _disposable_ or _async disposable_ resource from a callback, which is called when the resource is disposed. This allows objects which don't implement the `Disposable` and `AsyncDisposable` interfaces to be used with the `using` and `usingFrom` helpers, or simply to register a callback when exiting a `using` iterator block.
-
-The classes also have a static `from` method to create a `Disposable` or `AsyncDisposable` object which aggregates multiple _disposable_ or _async disposable_ resources, similarly to how the `using` helper aggregates multiple resources. The `from` static method eagerly consumes an iterable and adds its resources for tracking. The aggregated resources are disposed of in reverse order. If multiple resources are aggregated and any error is thrown during their disposal, an `AggregateError` is thrown when the aggregate object is disposed of. If any error occurs during construction, all iterated resources so far are automatically disposed of.
-
-### `Disposable` constructor
-
-```ts
-interface DisposableConstructor {
-  /**
-   * Creates a disposable object aggregating multiple disposable resources
-   *
-   * @param disposables - An iterable containing resources to be disposed of
-   * when the returned object is itself disposed of
-   */
-  from(disposables: Iterable<Disposable>): Disposable;
-
-  /**
-   * Creates a disposable object aggregating multiple disposable resources
-   *
-   * @param values - An iterable containing values for which the mapped
-   * resource will be disposed of when the returned object is itself disposed of
-   * @param mapFn - A function returning a disposable resource from the
-   * iterated value
-   */
-  from<T>(values: Iterable<T>, mapFn: (value: T) => Disposable): Disposable;
-
-  /**
-   * Creates a disposable object from a simple callback
-   *
-   * @param onDispose - A callback to execute when this object is disposed of
-   */
-  new (onDispose: () => void): Disposable;
-}
-```
-
-`Disposable.from()` consumes any `Iterable`. The optional `mapFn` will be called for each iterated value and must return a _disposable_ resource. It's used for aggregating the disposal of multiple resources.
-
-`new Disposable()` requires a callback argument which will be called when the constructed _disposable_ object is disposed of. It's used to interoperate with resources which don't implement the `Disposable` interface.
-
-### `AsyncDisposable` constructor
-
-```ts
-interface AsyncDisposableConstructor {
-  /**
-   * Creates an async disposable object aggregating multiple disposable or
-   * async disposable resources
-   *
-   * @param disposables - An iterable or async iterable containing resources to
-   * be disposed of when the returned object is itself disposed of
-   */
-  from(
-    disposables:
-      | Iterable<Disposable | AsyncDisposable>
-      | AsyncIterable<Disposable | AsyncDisposable>
-  ): Promise<AsyncDisposable>;
-
-  /**
-   * Creates an async disposable object aggregating multiple disposable or
-   * async disposable resources
-   *
-   * @param values - An iterable or async iterable containing values for which
-   * the mapped resource will be disposed of when the returned object is itself
-   * disposed of
-   * @param mapFn - A function returning a disposable or async disposable
-   * resource from the iterated value
-   */
-  from<T>(
-    values: Iterable<T> | AsyncIterable<T>,
-    mapFn: (value: T) => Disposable | AsyncDisposable
-  ): Promise<AsyncDisposable>;
-
-  /**
-   * Creates an async disposable object from a simple async callback
-   *
-   * @param onDispose - An async callback to execute when this object is
-   * disposed of
-   */
-  new (onDispose: () => void | PromiseLike<void>);
-}
-```
-
-`AsyncDisposable.from()` consumes any `Iterable` or `AsyncIterable`. The optional `mapFn` will be called for each iterated value and must return a _disposable_ or _async iterable_ resource. It's used for aggregating the disposal of multiple resources.
-
-`new AsyncDisposable()` requires a callback argument which will be called and awaited when the constructed _async disposable_ object is disposed of. It's used to interoperate with resources which don't implement the `AsyncDisposable` interface.
-
-### Examples
-
-Working with existing resources that do not conform to the `Disposable` or `AsyncDisposable` interface:
-
-```js
-for await (const using of AsyncDisposable) {
-  const reader = ...;
-  using(new Disposable(() => reader.releaseLock()));
-  ...
-}
-```
-
-Schedule other cleanup work to evaluate at the end of the block similar to Go's `defer` statement:
-
-```js
-for (const using of Disposable) {
-  console.log("enter");
-  using(new Disposable(() => console.log("exit")));
-  ...
 }
 ```
