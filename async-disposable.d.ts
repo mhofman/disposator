@@ -8,7 +8,7 @@ export interface AsyncDisposable {
   [symbolAsyncDispose](): Promise<void>;
 }
 
-export declare namespace AsyncDisposable {
+declare namespace AsyncDisposable {
   /**
    * An async disposable object aggregating multiple resources
    *

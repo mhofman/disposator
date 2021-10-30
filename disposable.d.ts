@@ -7,7 +7,7 @@ export interface Disposable {
   [symbolDispose](): void;
 }
 
-export declare namespace Disposable {
+declare namespace Disposable {
   /**
    * A disposable object aggregating multiple resources
    *

@@ -17,3 +17,5 @@ declare global {
   var Disposable: typeof import("./index.js").Disposable;
   var AsyncDisposable: typeof import("./index.js").AsyncDisposable;
 }
+
+export {};
