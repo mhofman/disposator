@@ -214,6 +214,67 @@ const wrapIterator = (iter, getDisposable) => {
   return wrapped;
 };
 
+/**
+ * @param {DisposableAggregate} value
+ * @param {IAsyncDisposable} disposable
+ * @returns {import("./async-disposable.js").AsyncDisposable.UsingAsyncIterator}
+ */
+const getIterator = (value, disposable) => {
+  /** @type {IAsyncDisposable | undefined} */
+  let res = disposable;
+
+  let used = false;
+
+  return createAsyncIterator({
+    async next() {
+      if (!used && res) {
+        used = true;
+        return {
+          value,
+          done: false,
+        };
+      } else {
+        if (res) {
+          await res[symbolAsyncDispose]();
+          res = undefined;
+        }
+        return {
+          value: undefined,
+          done: true,
+        };
+      }
+    },
+    async return() {
+      used = true;
+      try {
+        if (res) {
+          await res[symbolAsyncDispose]();
+          res = undefined;
+        }
+      } catch (disposeError) {
+        // TODO: find a way to report when `return` triggered by a throw
+        throw disposeError;
+      }
+      return {
+        value: undefined,
+        done: true,
+      };
+    },
+    async throw(err) {
+      used = true;
+      try {
+        if (res) {
+          await res[symbolAsyncDispose]();
+          res = undefined;
+        }
+      } catch (disposeError) {
+        err = mergeCause(disposeError, err);
+      }
+      throw err;
+    },
+  });
+};
+
 export const AsyncDisposable = /** @type {DisposableConstructor} */ (
   class AsyncDisposable {
     /** @type {Array<DisposableResourceRecord>} */
@@ -405,62 +466,8 @@ export const AsyncDisposable = /** @type {DisposableConstructor} */ (
     }
 
     static [Symbol.asyncIterator]() {
-      /** @type {DisposableAggregate | undefined} */
-      let res = new (this || Disposable)();
-
-      let used = false;
-
-      /** @type {import("./async-disposable.js").AsyncDisposable.UsingAsyncIterator} */
-      const iterator = createAsyncIterator({
-        async next() {
-          if (!used && res) {
-            used = true;
-            return {
-              value: res,
-              done: false,
-            };
-          } else {
-            if (res) {
-              await res[symbolAsyncDispose]();
-              res = undefined;
-            }
-            return {
-              value: res,
-              done: true,
-            };
-          }
-        },
-        async return() {
-          used = true;
-          try {
-            if (res) {
-              await res[symbolAsyncDispose]();
-              res = undefined;
-            }
-          } catch (disposeError) {
-            // TODO: find a way to report when `return` triggered by a throw
-            throw disposeError;
-          }
-          return {
-            value: res,
-            done: true,
-          };
-        },
-        async throw(err) {
-          used = true;
-          try {
-            if (res) {
-              await res[symbolAsyncDispose]();
-              res = undefined;
-            }
-          } catch (disposeError) {
-            err = mergeCause(disposeError, err);
-          }
-          throw err;
-        },
-      });
-
-      return iterator;
+      const disposable = new (this || AsyncDisposable)();
+      return getIterator(disposable, disposable);
     }
   }
 );

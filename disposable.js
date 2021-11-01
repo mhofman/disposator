@@ -198,6 +198,67 @@ const wrapIterator = (iter, getDisposable) => {
   return wrapped;
 };
 
+/**
+ * @param {DisposableAggregate} value
+ * @param {IDisposable} disposable
+ * @returns {import("./disposable.js").Disposable.UsingIterator}
+ */
+const getIterator = (value, disposable) => {
+  /** @type {IDisposable | undefined} */
+  let res = disposable;
+
+  let used = false;
+
+  return createIterator({
+    next() {
+      if (!used && res) {
+        used = true;
+        return {
+          value,
+          done: false,
+        };
+      } else {
+        if (res) {
+          res[symbolDispose]();
+          res = undefined;
+        }
+        return {
+          value: undefined,
+          done: true,
+        };
+      }
+    },
+    return() {
+      used = true;
+      try {
+        if (res) {
+          res[symbolDispose]();
+          res = undefined;
+        }
+      } catch (disposeError) {
+        // TODO: find a way to report when `return` triggered by a throw
+        throw disposeError;
+      }
+      return {
+        value: undefined,
+        done: true,
+      };
+    },
+    throw(err) {
+      used = true;
+      try {
+        if (res) {
+          res[symbolDispose]();
+          res = undefined;
+        }
+      } catch (disposeError) {
+        err = mergeCause(disposeError, err);
+      }
+      throw err;
+    },
+  });
+};
+
 export const Disposable = /** @type {DisposableConstructor} */ (
   class Disposable {
     /** @type {Array<DisposableResourceRecord>} */
@@ -346,62 +407,8 @@ export const Disposable = /** @type {DisposableConstructor} */ (
     }
 
     static [Symbol.iterator]() {
-      /** @type {DisposableAggregate | undefined} */
-      let res = new (this || Disposable)();
-
-      let used = false;
-
-      /** @type {import("./disposable.js").Disposable.UsingIterator} */
-      const iterator = createIterator({
-        next() {
-          if (!used && res) {
-            used = true;
-            return {
-              value: res,
-              done: false,
-            };
-          } else {
-            if (res) {
-              res[symbolDispose]();
-              res = undefined;
-            }
-            return {
-              value: res,
-              done: true,
-            };
-          }
-        },
-        return() {
-          used = true;
-          try {
-            if (res) {
-              res[symbolDispose]();
-              res = undefined;
-            }
-          } catch (disposeError) {
-            // TODO: find a way to report when `return` triggered by a throw
-            throw disposeError;
-          }
-          return {
-            value: res,
-            done: true,
-          };
-        },
-        throw(err) {
-          used = true;
-          try {
-            if (res) {
-              res[symbolDispose]();
-              res = undefined;
-            }
-          } catch (disposeError) {
-            err = mergeCause(disposeError, err);
-          }
-          throw err;
-        },
-      });
-
-      return iterator;
+      const disposable = new (this || Disposable)();
+      return getIterator(disposable, disposable);
     }
   }
 );
