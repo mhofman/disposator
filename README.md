@@ -243,15 +243,17 @@ The `AsyncDisposable`'s `using` helper function can be used to track any _dispos
 
 The disposal of an _async disposable like_ resource is awaited before moving to the next resource. The disposal of a _disposable_ resource is not awaited. The aggregate disposal step is always awaited even if all tracked resources are _disposable_ which are disposed of synchronously.
 
-## Aggregate disposable iterator helper
+## Aggregate disposable iterator helpers
 
-The `Disposable` and `AsyncDisposable` exports both implement a special iterator helper which streamlines creating an aggregated resource object and disposing of resources added for tracking. While these iterators only ever yield a single value (the aggregate object), they are meant to be used with respectively the `for-of` and `for-await-of` statements which automatically closes their iterator in case of an early return or thrown error. The iterator closure triggers the disposal of the aggregate object and the resources it tracks.
+### Multiple resource iterator helper
+
+The `Disposable` and `AsyncDisposable` exports both implement a special iterator helper which streamlines creating an aggregated resource object and disposing of resources added for tracking. While these iterators only ever yield a single value (the aggregate object), they are meant to be used with respectively the `for-of` and `for-await-of` statements which automatically closes their iterator in case of an early return or thrown error. The iterator's close triggers the disposal of the aggregate object and the resources it tracks.
 
 Combined with the detachable `using` helper of the aggregate object, it allows seamlessly tracking multiple _disposable like_ or _async disposable like_ resources and ensuring that they are properly disposed of when exiting a scope block, without dealing directly with the aggregate object itself.
 
 If the disposal of the aggregate resource was triggered by an error thrown during the evaluation of the `for-of` or `for-await-of` block, that error takes precedence and errors occurring during the disposal are ignored. This is unlike `try-finally` statements where an error during the `finally` block takes precedence over the `try` block.
 
-### `for (const { using } of Disposable)`
+#### `for (const { using } of Disposable)`
 
 ```ts
 interface AggregateDisposableConstructor {
@@ -261,29 +263,30 @@ interface AggregateDisposableConstructor {
    * of when the iterator is closed. Use with a `for-of` statement to perform
    * RAII style explicit resource management
    */
-  [Symbol.iterator](): Iterator<AggregateDisposable, void, void>;
+  [Symbol.iterator](): IterableIterator<AggregateDisposable>;
 }
 ```
 
 When the iterator closes, either from an early return, thrown error, or once the block completes, the aggregate object disposes of its tracked resources in reverse order to which they were added.
 
-### `for await (const { using } of AsyncDisposable)`
+#### `for await (const { using } of AsyncDisposable)`
 
 ```ts
 interface AggregateAsyncDisposableConstructor {
   /**
-   * Returns an iterator which yields a new async aggregate instance. Its `using`
-   * helper can be used to track disposable or async disposable resources
-   * which will be disposed of when the iterator is closed. Use with a
-   * `for-await-of` statement to perform RAII style explicit resource management
+   * Returns an async iterator which yields a new async aggregate instance.
+   * Its `using` helper can be used to track disposable or async disposable
+   * resources which will be disposed of when the iterator is closed. Use
+   * with a `for-await-of` statement to perform RAII style explicit resource
+   * management
    */
-  [Symbol.asyncIterator](): AsyncIterator<AggregateAsyncDisposable, void, void>;
+  [Symbol.asyncIterator](): AsyncIterableIterator<AggregateAsyncDisposable>;
 }
 ```
 
 When the iterator closes, either from an early return, thrown error, or once the block completes, the async aggregate object disposes of its tracked resources in reverse order to which they were added.
 
-### Examples
+#### Examples
 
 The following show examples of using the iterator helper with various APIs, assuming those APIs implement the _disposable_ or _async disposable_ interfaces.
 
@@ -369,6 +372,71 @@ for (const { using } of Disposable) {
   ...
 }
 ```
+
+### Single resource iterator helper
+
+For the case where only a single _disposable_ or _async disposable_ resource needs to be tracked, the `Disposable.using()` and `AsyncDisposable.using()` helpers can be used instead. The iterator yields a single value, the resource itself, and disposes of it when the iterator is closed. The iterators are meant to be used with respectively the `for-of` and `for-await-of` statements which automatically closes their iterator in case of an early return or thrown error.
+
+#### `for (const res of Disposable.using(getResource()))`
+
+```ts
+interface AggregateDisposableConstructor {
+  /**
+   * Returns an iterator which yields the provided disposable resource, and
+   * disposes of the resource at close. Use with a `for-of` statement to
+   * ensure the iterator is closed and the resource disposed of after usage.
+   *
+   * @param disposable The disposable resource to track
+   */
+  using<T extends DisposableResource>(disposable: T): IterableIterator<T>;
+
+  /**
+   * Returns an iterator which yields the provided resource, and disposes of
+   * the resource with the specified dispose callback at close. Use with a
+   * `for-of` statement to ensure the iterator is closed and the resource
+   * disposed of after usage.
+   *
+   * @param value A value to consider as a resource to dispose
+   * @param onDispose The dispose callback invoked with the value
+   * as `this` context
+   */
+  using<T>(value: T, onDispose: OnDispose): IterableIterator<T>;
+}
+```
+
+The `using` helper captures the _disposable_ and its dispose method, or the resource and the dispose callback. When the returned iterator closes, either from an early return, thrown error, or once the block completes, the iterator disposes of the tracked resource. If an optional `onDispose` callback is provided, it's called with the resource value as `this` context.
+
+#### `for await (const res of AsyncDisposable.using(getResource()))`
+
+```ts
+interface AggregateAsyncDisposableConstructor {
+  /**
+   * Returns an async iterator which yields the provided async disposable
+   * resource, and disposes of the resource at close. Use with a
+   * `for-await-of` statement to ensure the iterator is closed and the
+   * resource disposed of after usage.
+   *
+   * @param disposable The disposable resource to track
+   */
+  using<T extends AsyncDisposableResource>(
+    disposable: T
+  ): AsyncIterableIterator<T>;
+
+  /**
+   * Returns an async iterator which yields the provided resource, and
+   * disposes of the resource with the specified async dispose callback at
+   * close. Use with a `for-await-of` statement to ensure the iterator is
+   * closed and the resource disposed of after usage.
+   *
+   * @param value A value to consider as a resource to dispose
+   * @param onDispose The async dispose callback invoked with the value
+   * as `this` context
+   */
+  using<T>(value: T, onDispose: OnAsyncDispose): AsyncIterableIterator<T>;
+}
+```
+
+The `using` helper captures the _async disposable_ and its dispose method, or the resource and the dispose async callback. When the returned iterator closes, either from an early return, thrown error, or once the block completes, the iterator disposes of the tracked resource. If an optional `onDispose` async callback is provided, it's called with the resource value as `this` context.
 
 ## `usingFrom`: iterable of _disposable_
 

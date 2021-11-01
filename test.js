@@ -112,6 +112,10 @@ try {
   }
 } catch (err) {}
 
+for (const res of Disposable.using(getResource("ola"))) {
+  console.log(`using ${res.name}`);
+}
+
 for (const res of Disposable.usingFrom(getResources(testNames))) {
   console.log(`using ${res.name}`);
 }
@@ -162,6 +166,10 @@ try {
     throw new Error();
   }
 } catch (err) {}
+
+for await (const res of AsyncDisposable.using(getAsyncResource("ola"))) {
+  console.log(`using ${res.name}`);
+}
 
 for await (const res of AsyncDisposable.usingFrom(
   getAsyncResources(testNames)

@@ -87,12 +87,35 @@ declare namespace AsyncDisposable {
     ): AsyncIterable<T>;
 
     /**
-     * Returns an iterator which yields a new async aggregate instance. Its `using`
-     * helper can be used to track disposable or async disposable resources
-     * which will be disposed of when the iterator is closed. Use with a
-     * `for-await-of` statement to perform RAII style explicit resource management
+     * Returns an async iterator which yields the provided async disposable
+     * resource, and disposes of the resource at close. Use with a
+     * `for-await-of` statement to ensure the iterator is closed and the
+     * resource disposed of after usage.
+     *
+     * @param disposable The disposable resource to track
      */
-    [Symbol.asyncIterator](): UsingAsyncIterator;
+    using<T extends Resource>(disposable: T): UsingIterator<T>;
+
+    /**
+     * Returns an async iterator which yields the provided resource, and
+     * disposes of the resource with the specified async dispose callback at
+     * close. Use with a `for-await-of` statement to ensure the iterator is
+     * closed and the resource disposed of after usage.
+     *
+     * @param value A value to consider as a resource to dispose
+     * @param onDispose The async dispose callback invoked with the value
+     * as `this` context
+     */
+    using<T>(value: T, onDispose: OnDispose<T>): UsingIterator<T>;
+
+    /**
+     * Returns an async iterator which yields a new async aggregate instance.
+     * Its `using` helper can be used to track disposable or async disposable
+     * resources which will be disposed of when the iterator is closed. Use
+     * with a `for-await-of` statement to perform RAII style explicit resource
+     * management
+     */
+    [Symbol.asyncIterator](): UsingIterator<Aggregate>;
   }
 
   export interface Using {
@@ -119,7 +142,7 @@ declare namespace AsyncDisposable {
 
   export type Resource<T = void> = Disposable | AsyncDisposable | OnDispose<T>;
 
-  export type UsingAsyncIterator = AsyncIterator<Aggregate, void, void>;
+  export type UsingIterator<T> = AsyncIterableIterator<T>;
 }
 
 export declare const AsyncDisposable: AsyncDisposable.Constructor;

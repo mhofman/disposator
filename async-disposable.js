@@ -215,9 +215,10 @@ const wrapIterator = (iter, getDisposable) => {
 };
 
 /**
- * @param {DisposableAggregate} value
+ * @template T
+ * @param {T} value
  * @param {IAsyncDisposable} disposable
- * @returns {import("./async-disposable.js").AsyncDisposable.UsingAsyncIterator}
+ * @returns {import("./async-disposable.js").AsyncDisposable.UsingIterator<T>}
  */
 const getIterator = (value, disposable) => {
   /** @type {IAsyncDisposable | undefined} */
@@ -479,6 +480,17 @@ export const AsyncDisposable = /** @type {DisposableConstructor} */ (
           return wrapIterator(iterator, mapFn);
         },
       };
+    }
+
+    /**
+     * @param {any} value
+     * @param {DisposeMethod} [onDispose]
+     */
+    static using(value, onDispose) {
+      // Wrap value even if it's already a disposable
+      const disposable = new (this || AsyncDisposable)();
+      disposable.using(value, onDispose);
+      return getIterator(value, disposable);
     }
 
     static [Symbol.asyncIterator]() {

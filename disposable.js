@@ -199,9 +199,10 @@ const wrapIterator = (iter, getDisposable) => {
 };
 
 /**
- * @param {DisposableAggregate} value
+ * @template T
+ * @param {T} value
  * @param {IDisposable} disposable
- * @returns {import("./disposable.js").Disposable.UsingIterator}
+ * @returns {import("./disposable.js").Disposable.UsingIterator<T>}
  */
 const getIterator = (value, disposable) => {
   /** @type {IDisposable | undefined} */
@@ -419,6 +420,17 @@ export const Disposable = /** @type {DisposableConstructor} */ (
           return wrapIterator(iterator, mapFn);
         },
       };
+    }
+
+    /**
+     * @param {any} value
+     * @param {DisposeMethod} [onDispose]
+     */
+    static using(value, onDispose) {
+      // Wrap value even if it's already a disposable
+      const disposable = new (this || Disposable)();
+      disposable.using(value, onDispose);
+      return getIterator(value, disposable);
     }
 
     static [Symbol.iterator]() {
