@@ -78,6 +78,21 @@ const addDisposable = (disposable, resource, stack, onError) => {
 };
 
 /**
+ * @param {DisposableResourceRecord} record
+ * @returns {void | PromiseLike<void>}
+ */
+const disposeRecord = ({ resourceValue, hint, disposeMethod }) => {
+  switch (hint) {
+    case "sync":
+      return void disposeMethod.call(resourceValue);
+    case "async":
+      return disposeMethod.call(resourceValue);
+    default:
+      throw new TypeError("Invalid disposable record");
+  }
+};
+
+/**
  * @param {unknown} error
  * @param {unknown} cause
  */
@@ -113,9 +128,9 @@ const wrapIterator = (iter, getDisposable) => {
   let pendingRecord;
   const dispose = () => {
     if (!pendingRecord) return;
-    const { disposeMethod, resourceValue } = pendingRecord;
+    const record = pendingRecord;
     pendingRecord = undefined;
-    return disposeMethod.call(resourceValue);
+    return disposeRecord(record);
   };
 
   /**
@@ -244,20 +259,13 @@ export const AsyncDisposable = /** @type {DisposableConstructor} */ (
       const multipleResources = this.#resourceStack.length > 1;
 
       while (this.#resourceStack.length) {
-        const { resourceValue, hint, disposeMethod } =
-          /** @type {DisposableResourceRecord} */ (this.#resourceStack.pop());
+        const record = /** @type {DisposableResourceRecord} */ (
+          this.#resourceStack.pop()
+        );
 
         try {
-          switch (hint) {
-            case "sync":
-              disposeMethod.call(resourceValue);
-              break;
-            case "async":
-              await disposeMethod.call(resourceValue);
-              break;
-            default:
-              throw new TypeError("Invalid disposable record");
-          }
+          const res = disposeRecord(record);
+          if (res !== undefined) await res;
         } catch (err) {
           errors.push(err);
         }
