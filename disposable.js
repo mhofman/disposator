@@ -64,6 +64,28 @@ const addDisposable = (disposable, resource, stack, onError) => {
 };
 
 /**
+ * @param {unknown} error
+ * @param {unknown} cause
+ */
+const mergeCause = (error, cause) => {
+  let result;
+
+  try {
+    if (!("cause" in /** @type {Object}*/ (error))) {
+      Object.defineProperty(error, "cause", {
+        value: cause,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+      result = error;
+    }
+  } catch (e) {}
+
+  return result || new AggregateError([cause, error]);
+};
+
+/**
  * @param {Iterator<unknown>} iter
  * @param {MapFn} getDisposable
  */
@@ -273,12 +295,7 @@ export const Disposable = /** @type {DisposableConstructor} */ (
         } else {
           error = new AggregateError(errors);
           if (iterationError) {
-            Object.defineProperty(error, "cause", {
-              value: iterationError,
-              enumerable: false,
-              writable: true,
-              configurable: true,
-            });
+            error = mergeCause(error, iterationError);
           }
         }
         throw error;
@@ -370,17 +387,7 @@ export const Disposable = /** @type {DisposableConstructor} */ (
               res = undefined;
             }
           } catch (disposeError) {
-            if (!("cause" in /** @type {Object}*/ (disposeError))) {
-              Object.defineProperty(disposeError, "cause", {
-                value: err,
-                enumerable: false,
-                writable: true,
-                configurable: true,
-              });
-              throw disposeError;
-            } else {
-              throw new AggregateError([err, disposeError]);
-            }
+            err = mergeCause(disposeError, err);
           }
           throw err;
         },
