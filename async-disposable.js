@@ -78,6 +78,43 @@ const addDisposable = (disposable, resource, stack, onError) => {
 };
 
 /**
+ * @param {DisposableResourceRecord} record
+ * @returns {void | PromiseLike<void>}
+ */
+const disposeRecord = ({ resourceValue, hint, disposeMethod }) => {
+  switch (hint) {
+    case "sync":
+      return void disposeMethod.call(resourceValue);
+    case "async":
+      return disposeMethod.call(resourceValue);
+    default:
+      throw new TypeError("Invalid disposable record");
+  }
+};
+
+/**
+ * @param {unknown} error
+ * @param {unknown} cause
+ */
+const mergeCause = (error, cause) => {
+  let result;
+
+  try {
+    if (!("cause" in /** @type {Object}*/ (error))) {
+      Object.defineProperty(error, "cause", {
+        value: cause,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+      result = error;
+    }
+  } catch (e) {}
+
+  return result || new AggregateError([cause, error]);
+};
+
+/**
  * @param {Iterator<unknown> | AsyncIterator<unknown>} iter
  * @param {MapFn} getDisposable
  */
@@ -91,9 +128,9 @@ const wrapIterator = (iter, getDisposable) => {
   let pendingRecord;
   const dispose = () => {
     if (!pendingRecord) return;
-    const { disposeMethod, resourceValue } = pendingRecord;
+    const record = pendingRecord;
     pendingRecord = undefined;
-    return disposeMethod.call(resourceValue);
+    return disposeRecord(record);
   };
 
   /**
@@ -177,6 +214,68 @@ const wrapIterator = (iter, getDisposable) => {
   return wrapped;
 };
 
+/**
+ * @template T
+ * @param {T} value
+ * @param {IAsyncDisposable} disposable
+ * @returns {import("./async-disposable.js").AsyncDisposable.UsingIterator<T>}
+ */
+const getIterator = (value, disposable) => {
+  /** @type {IAsyncDisposable | undefined} */
+  let res = disposable;
+
+  let used = false;
+
+  return createAsyncIterator({
+    async next() {
+      if (!used && res) {
+        used = true;
+        return {
+          value,
+          done: false,
+        };
+      } else {
+        if (res) {
+          await res[symbolAsyncDispose]();
+          res = undefined;
+        }
+        return {
+          value: undefined,
+          done: true,
+        };
+      }
+    },
+    async return() {
+      used = true;
+      try {
+        if (res) {
+          await res[symbolAsyncDispose]();
+          res = undefined;
+        }
+      } catch (disposeError) {
+        // TODO: find a way to report when `return` triggered by a throw
+        throw disposeError;
+      }
+      return {
+        value: undefined,
+        done: true,
+      };
+    },
+    async throw(err) {
+      used = true;
+      try {
+        if (res) {
+          await res[symbolAsyncDispose]();
+          res = undefined;
+        }
+      } catch (disposeError) {
+        err = mergeCause(disposeError, err);
+      }
+      throw err;
+    },
+  });
+};
+
 export const AsyncDisposable = /** @type {DisposableConstructor} */ (
   class AsyncDisposable {
     /** @type {Array<DisposableResourceRecord>} */
@@ -222,20 +321,13 @@ export const AsyncDisposable = /** @type {DisposableConstructor} */ (
       const multipleResources = this.#resourceStack.length > 1;
 
       while (this.#resourceStack.length) {
-        const { resourceValue, hint, disposeMethod } =
-          /** @type {DisposableResourceRecord} */ (this.#resourceStack.pop());
+        const record = /** @type {DisposableResourceRecord} */ (
+          this.#resourceStack.pop()
+        );
 
         try {
-          switch (hint) {
-            case "sync":
-              disposeMethod.call(resourceValue);
-              break;
-            case "async":
-              await disposeMethod.call(resourceValue);
-              break;
-            default:
-              throw new TypeError("Invalid disposable record");
-          }
+          const res = disposeRecord(record);
+          if (res !== undefined) await res;
         } catch (err) {
           errors.push(err);
         }
@@ -255,11 +347,27 @@ export const AsyncDisposable = /** @type {DisposableConstructor} */ (
      * @param {DisposeMethod} [onDispose]
      */
     using(value, onDispose) {
-      const stack = this.#resourceStack;
+      const isDisposed = this.#state === "disposed";
+
+      const stack = !isDisposed ? this.#resourceStack : [];
 
       typeof onDispose === "function"
         ? addDisposable(onDispose, value, stack)
         : addDisposable(value, value, stack);
+
+      if (isDisposed) {
+        /** @type {unknown} */
+        let err = new TypeError(
+          "Can't add resource, AsyncDisposable has already been disposed"
+        );
+        try {
+          // For an "async" resource this will result in an unhandled rejection
+          disposeRecord(/** @type {DisposableResourceRecord} */ (stack.pop()));
+        } catch (disposeError) {
+          err = mergeCause(disposeError, err);
+        }
+        throw err;
+      }
 
       return value;
     }
@@ -319,12 +427,7 @@ export const AsyncDisposable = /** @type {DisposableConstructor} */ (
         } else {
           error = new AggregateError(errors);
           if (iterationError) {
-            Object.defineProperty(error, "cause", {
-              value: iterationError,
-              enumerable: false,
-              writable: true,
-              configurable: true,
-            });
+            error = mergeCause(error, iterationError);
           }
         }
         if (syncDone) {
@@ -379,73 +482,20 @@ export const AsyncDisposable = /** @type {DisposableConstructor} */ (
       };
     }
 
+    /**
+     * @param {any} value
+     * @param {DisposeMethod} [onDispose]
+     */
+    static using(value, onDispose) {
+      // Wrap value even if it's already a disposable
+      const disposable = new (this || AsyncDisposable)();
+      disposable.using(value, onDispose);
+      return getIterator(value, disposable);
+    }
+
     static [Symbol.asyncIterator]() {
-      /** @type {DisposableAggregate | undefined} */
-      let res = new (this || Disposable)();
-
-      let used = false;
-
-      /** @type {import("./async-disposable.js").AsyncDisposable.UsingAsyncIterator} */
-      const iterator = createAsyncIterator({
-        async next() {
-          if (!used && res) {
-            used = true;
-            return {
-              value: res,
-              done: false,
-            };
-          } else {
-            if (res) {
-              await res[symbolAsyncDispose]();
-              res = undefined;
-            }
-            return {
-              value: res,
-              done: true,
-            };
-          }
-        },
-        async return() {
-          used = true;
-          try {
-            if (res) {
-              await res[symbolAsyncDispose]();
-              res = undefined;
-            }
-          } catch (disposeError) {
-            // TODO: find a way to report when `return` triggered by a throw
-            throw disposeError;
-          }
-          return {
-            value: res,
-            done: true,
-          };
-        },
-        async throw(err) {
-          used = true;
-          try {
-            if (res) {
-              await res[symbolAsyncDispose]();
-              res = undefined;
-            }
-          } catch (disposeError) {
-            if (!("cause" in /** @type {Object}*/ (disposeError))) {
-              Object.defineProperty(disposeError, "cause", {
-                value: err,
-                enumerable: false,
-                writable: true,
-                configurable: true,
-              });
-              throw disposeError;
-            } else {
-              throw new AggregateError([err, disposeError]);
-            }
-          }
-          throw err;
-        },
-      });
-
-      return iterator;
+      const disposable = new (this || AsyncDisposable)();
+      return getIterator(disposable, disposable);
     }
   }
 );
