@@ -173,7 +173,7 @@ export const AsyncDisposable: AggregateAsyncDisposableConstructor;
 
 ### `using` helper: add resources for tracking
 
-The `AggregateDisposable` and `AggregateAsyncDisposable` objects expose a `using` helper on their instance which can be used to add resources for tracking after construction of the aggregate object. The `using` helper can be detached from the aggregate object (it's bound at construction). It passes through its value for chaining, or assignment at acquisition time. `using` accepts a dispose callback function as an optional argument. This can be used to implement disposal for values which do not implement the disposables interfaces. In that case the value is passed as `this` context to the dispose callback
+The `AggregateDisposable` and `AggregateAsyncDisposable` objects expose a `using` helper on their instance which can be used to add resources for tracking after construction of the aggregate object. The `using` helper can be detached from the aggregate object (it's bound at construction). Calling `using` after the aggregate has been disposed throws an error. It passes through its value for chaining, or assignment at acquisition time. `using` accepts a dispose callback function as an optional argument. This can be used to implement disposal for values which do not implement the disposables interfaces. In that case the value is passed as `this` context to the dispose callback
 
 #### Aggregate `Disposable`
 
@@ -238,8 +238,6 @@ interface AggregateAsyncDisposableUsing {
   <T>(value: T, onDispose: OnAsyncDispose): T;
 }
 ```
-
-The `Disposable`'s `using` helper function can be used to track any _disposable like_ resource. It captures the _disposable_ and its dispose method, or the dispose callback, then passes through the value. Additionally `using` can be called with an `onDispose` callback as second argument, which will be called with the value as `this` context. When the aggregate object is disposed of, the tracked resources are disposed of in reverse order to which they were added.
 
 The `AsyncDisposable`'s `using` helper function can be used to track any _disposable_ or _async disposable like_ resource. It captures the _disposable_ and its dispose method, the _async disposable_ and its async dispose method, or the async dispose callback, then passes through the value. Additionally `using` can be called with an `onDispose` async callback as second argument, which will be called with the value as `this` context. When the aggregate async object is disposed of, the tracked resources are disposed of in reverse order to which they were added.
 

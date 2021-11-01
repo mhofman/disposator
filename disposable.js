@@ -316,11 +316,26 @@ export const Disposable = /** @type {DisposableConstructor} */ (
      * @param {DisposeMethod} [onDispose]
      */
     using(value, onDispose) {
-      const stack = this.#resourceStack;
+      const isDisposed = this.#state === "disposed";
+
+      const stack = !isDisposed ? this.#resourceStack : [];
 
       typeof onDispose === "function"
         ? addDisposable(onDispose, value, stack)
         : addDisposable(value, value, stack);
+
+      if (isDisposed) {
+        /** @type {unknown} */
+        let err = new TypeError(
+          "Can't add resource, Disposable has already been disposed"
+        );
+        try {
+          disposeRecord(/** @type {DisposableResourceRecord} */ (stack.pop()));
+        } catch (disposeError) {
+          err = mergeCause(disposeError, err);
+        }
+        throw err;
+      }
 
       return value;
     }
